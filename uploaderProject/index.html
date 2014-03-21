@@ -1,0 +1,365 @@
+<!doctype html>
+<html lang="en">
+<head>
+	<meta charset="UTF-8">
+	<title>多文件交互上传——@Benjamin</title>
+	<link rel="stylesheet" type="text/css" href="uploder.css">
+</head>
+<body>
+<div id="upload_wrapper">
+    <div id="container">
+        <!--头部，相册选择和格式选择-->
+        <div id="uploader">
+            <div class="queueList">
+                <div id="dndArea" class="placeholder">
+                    <div id="selectFileBtn"></div>
+                    <p>只支持.txt和.pkg两种后缀文件</p>
+                </div>
+                <ul id="filelist" class="filelist dn"></ul>
+            </div>
+            <div class="statusBar dn">
+                <div class="progress">
+                    <span class="text">0%</span>
+                    <span class="percentage"></span>
+                </div>
+                <div class="info"></div>
+                <div class="btns">
+                    <div class="uploadBtn" id="startUploadBtn">
+                    	开始上传
+                    </div>
+                </div>
+            </div>
+            <ul id="pkg_message"></ul>
+        </div>
+    </div>
+</div>
+<script type="text/javascript" src="jquery.js"></script>
+<script type="text/javascript" src="webUploader.js"></script>
+<script type="text/javascript">
+(function($){
+
+var 
+//保存txt文件外上传的pkg file对象
+filesArr      = [],
+
+//保存所有选择的file对象
+filesAllArr   = [],
+
+//addFiles调用时，触发beforeFileQueued
+flag          = false,
+
+//递归上传标识
+s             = 0,
+
+// 添加的文件数量
+fileCount     = 0,
+
+//重复上传文件数
+repeatFileNum = 0,
+
+// 添加的文件总大小
+fileSize      = 0,
+
+// 已上传文件总和
+loaded        = 0,
+
+//外文容器
+$uploader     = $("#uploader"),
+
+//存放上传队列
+$queueList    = $uploader.find("div.queueList"),
+
+//保存文件序列
+$ulist        = $uploader.find("ul.filelist"),
+
+//保存打升级包信息
+$pkg_message  = $("#pkg_message"),
+
+//选择上传区域
+$dndArea      = $("#dndArea"),
+
+$placeHolder = $uploader.find( '.placeholder' ),
+
+//开始上传按钮
+$startUpload  = $("#startUploadBtn"),
+
+//状态栏
+$statusBar    = $uploader.find("div.statusBar"),
+
+//进度条
+$progress     = $statusBar.find("div.progress"),
+
+//提示信息
+$info         = $statusBar.find("div.info"),
+
+//实例化对象
+uploader      = WebUploader.create({
+    // swf文件路径
+    swf: 'http://localhost/uploaderProject//Uploader.swf',
+    paste: '#uploader',
+    // 文件接收服务端。
+    server: './server/fileupload.php',
+    // 选择文件的按钮。可选。
+    pick: {
+        id: '#selectFileBtn',
+        label: '点击选择文件'
+    }
+});
+
+
+
+//文件绑定statusChange事件
+function bindFileStatus(file){
+	var
+	$li          = $("#"+file.id),
+	$btns        = $('<div class="file-panel"><span class ="cancel">删除</span></div>').appendTo($li),
+	$info_error  = $('<p class="error"></p>'),
+	showError    = function(code) {
+        switch (code) {
+            case 'interrupt':
+                text = '上传暂停';
+                break;
+            default:
+                text = '上传失败，请重试';
+                break;
+        }
+    	$info_error.text(text).appendTo($li);
+    	$info.show();
+    	updateInfo();
+	};
+
+	if (file.getStatus() === 'invalid') {
+	    showError(file.statusText);
+	}
+
+	file.on('statuschange', function(cur, prev) {
+	    if (cur === 'error' || cur === 'invalid') {
+	        showError(file.statusText);
+	    } else if (cur === 'interrupt') {
+	        showError('interrupt');
+	    }else if (cur === 'complete') {
+	        $li.append('<span class="success"></span>');
+	    }
+	    $li.removeClass('state-' + prev).addClass('state-' + cur);
+	});
+
+    $li.on('mouseenter', function() {
+        $btns.stop().animate({
+            height: 30
+        });
+    });
+
+    $li.on('mouseleave', function() {
+        $btns.stop().animate({
+            height: 0
+        });
+    });
+
+	$btns.on('click', 'span', function() {
+		var 
+		$li      = $(this).closest("li"),
+		fileid   = $li.attr("id"),
+		filename = $li.find("p.title").text();
+
+		if(!confirm("确定删除"+ filename + "？")) return;
+
+		for(var i = 0,ilen = filesAllArr.length; i < ilen; i++){
+			var file = filesAllArr[i];
+			if(fileid == file.id){
+				fileCount --;
+				fileSize  -= file.size;
+			}
+		}
+	    $li.remove();
+
+	    //更新info
+		setSelectedInfo()
+	});
+}
+
+//排序
+function quenceSort(filesArr,quenceArr){
+	var saveArr = [];
+	if(!(filesArr && quenceArr)) return;
+	for(var j = 0,jlen = quenceArr.length; j < jlen; j++){
+		var quence = quenceArr[j].split("*");
+
+		for(var i = 0,ilen = filesArr.length; i < ilen; i++){
+			var file = filesArr[i];
+			if(file.name === quence[0]){
+				if(quence[1] == 0){
+					saveArr.push(filesArr[i]);
+				}else{
+					repeatFileNum ++ ;
+					fileSize -= file.size;
+					$("#"+file.id).find("span.success").remove().end().append("<span class='success'></span>");
+					$pkg_message.append("<li class='red'>已打"+file.name+"升级包，重复上传，跳过！</li>");
+				}
+			}
+		}
+	}
+	return saveArr;
+}
+
+//设置当前上传状态
+function setSelectedInfo(){
+	var size = fileSize < 1024 
+	? "B" 
+	: fileSize < 1024*1024 
+	? (fileSize/1024).toFixed(2)+"KB" 
+	: (fileSize/(1024*1024)).toFixed(2)+"MB";
+    //更新文件总数量
+	$info.html("您选择了" + fileCount +"个文件，总大小为" + size );	
+}
+//更新进度条
+function updateProgress(file){
+	loaded += file.size;
+	var 
+	percent     = loaded ? loaded/fileSize : 0,
+	percent_str = Math.round(percent*100) + "%",
+	$text       = $progress.find("span.text"),
+	$percent    = $progress.find("span.percentage");
+	$text.text(percent_str);
+	$percent.css("width",percent_str);
+
+	if(percent_str == "100%"){
+		setTimeout(function(){
+			$info.show();
+			$progress.hide();
+			$startUpload.addClass("disabled");
+		},500);
+	}
+
+}
+//更新上传信息
+function updateInfo(){
+	var 
+	stats   = uploader.getStats(),
+	success = stats.successNum,
+	fail    = stats.uploadFailNum,
+	wait    = fileCount - success - fail - repeatFileNum;
+	$info.html(
+		"上传文件："+
+		"成功<span class='red'>" + success + "</span>个，"+
+		"失败<span class='red'>" + fail + "</span>个，"+
+		"等待<span class='red'>" + wait + "</span>个，"+
+		"重复并跳过<span class='red'>" + repeatFileNum + "</span>个。"+
+		"<span onclick='location.reload(true);' class='blue'>返回&gt;&gt;</span></li>"
+	);
+}
+
+
+///////////////////////绑定事件////////////////////////
+uploader.on("beforeFileQueued",function(file){
+	if(/[^.]\.(txt|pkg)$/.test(file.name)){
+		if(flag) return; 
+		fileCount ++;
+		fileSize += file.size;
+		
+		filesAllArr.push(file);
+		$ulist.append(
+			"<li id='"+file.id+"' title='"+file.name+"'>"
+				+"<p class='title'>"+file.name+"</p>"
+			+"</li>"
+		);
+		bindFileStatus(file);
+		if(file.name !== "grade.txt"){
+			filesArr.push(file);
+			return false;
+		}
+	}else{
+		//屏蔽非.txt/.pkg文件加入队列
+		return false;
+	}
+});
+
+uploader.on("fileQueued",function(file){
+
+});
+
+uploader.on( 'filesQueued', function( file ) {
+	if(flag) return;
+
+	//显示上传列表
+	$ulist.show();
+	//显示状态栏
+	$statusBar.show();
+	//隐藏进度条和选择文件区域
+	$progress.hide();
+	$dndArea.addClass("element-invisible");
+
+	//更新info
+	setSelectedInfo();
+});
+//上传成功是触发
+uploader.on("uploadSuccess",function(file){
+	var $li  = $("#"+file.id),
+		snum = fileCount - repeatFileNum - 1;
+	//更新进度条
+	updateProgress(file);
+	//更新上传信息
+	updateInfo();
+	//文本文件上传成功后，请求服务器端txt中的排序
+	if(file.name == "grade.txt"){
+		//请求txt文件中的排序
+		$.post("server/getQuence.php",function(quenceArr){
+			//排序动作
+			filesArr = quenceSort(filesArr,quenceArr);
+			
+			flag = true;
+			//添加到队列,注意：调用addFiles的时候, 也会触发beforeFileQueued事件，所以把flag设置为true
+			uploader.addFiles(filesArr[0]);
+			uploader.upload();
+		},"json");
+	}else{
+		s ++;
+		if(s > snum){
+			$startUpload.addClass('disabled');
+			return;
+		}
+		$.post("server/check.php",{filename:file.name},function(str){
+			if(str == "success"){
+				flag = true;
+
+				if(s != snum){
+					uploader.addFiles(filesArr[s]);
+					uploader.upload();
+				}
+
+				$pkg_message.append("<li>打升级包"+file.name+"成功</li>");
+			}else{
+				$pkg_message.append("<li>打升级包"+file.name+"<span class='red'>失败,后续动作终止！</span><span onclick='location.reload(true);' class='blue'>返回&gt;&gt;</span></li>");
+				//中断上传
+				uploader.stop();
+				$startUpload.addClass("disabled");
+			}
+		});
+	}
+});
+//文件上传出错时触发
+uploader.on("uploadError",function(file,code){
+	$progress.hide();
+	updateInfo();
+});
+//错误信息
+uploader.on("error",function(code){
+    alert('Eroor: ' + code);	
+});
+
+$startUpload.on("click",function(){
+    if ($(this).hasClass('disabled')) {
+        return false;
+    }
+	uploader.upload();
+
+	$progress.show();
+	$info.hide();
+	//隐藏删除动作
+	$ulist.find("div.file-panel").hide();
+});
+
+})(jQuery);
+
+</script>
+</body>
+</html>
