@@ -13,7 +13,7 @@
             <div class="queueList">
                 <div id="dndArea" class="placeholder">
                     <div id="selectFileBtn"></div>
-                    <p>只支持.txt和.pkg两种后缀文件</p>
+                    <p>只允许grade.txt和.pkg文件</p>
                 </div>
                 <ul id="filelist" class="filelist dn"></ul>
             </div>
@@ -50,6 +50,9 @@ flag          = false,
 
 //递归上传标识
 s             = 0,
+
+//升级文本文件名字
+txtname       = "grade.txt",
 
 // 添加的文件数量
 fileCount     = 0,
@@ -204,7 +207,7 @@ function quenceSort(filesArr,quenceArr){
 //设置当前上传状态
 function setSelectedInfo(){
 	var size = fileSize < 1024 
-	? "B" 
+	? fileSize + "B" 
 	: fileSize < 1024*1024 
 	? (fileSize/1024).toFixed(2)+"KB" 
 	: (fileSize/(1024*1024)).toFixed(2)+"MB";
@@ -251,24 +254,26 @@ function updateInfo(){
 
 ///////////////////////绑定事件////////////////////////
 uploader.on("beforeFileQueued",function(file){
-	if(/[^.]\.(txt|pkg)$/.test(file.name)){
+	var filename = file.name;
+	if((/[^.]\.txt$/.test(filename) && txtname === filename) || /[^.]\.pkg$/.test(filename)){
 		if(flag) return; 
 		fileCount ++;
 		fileSize += file.size;
 		
 		filesAllArr.push(file);
 		$ulist.append(
-			"<li id='"+file.id+"' title='"+file.name+"'>"
-				+"<p class='title'>"+file.name+"</p>"
+			"<li id='"+file.id+"' title='"+filename+"'>"
+				+"<p class='title'>"+filename+"</p>"
 			+"</li>"
 		);
 		bindFileStatus(file);
-		if(file.name !== "grade.txt"){
+		if(txtname !== filename) {
 			filesArr.push(file);
 			return false;
 		}
+
 	}else{
-		//屏蔽非.txt/.pkg文件加入队列
+		//屏蔽非grade.txt/.pkg文件加入队列
 		return false;
 	}
 });
@@ -293,14 +298,17 @@ uploader.on( 'filesQueued', function( file ) {
 });
 //上传成功是触发
 uploader.on("uploadSuccess",function(file){
-	var $li  = $("#"+file.id),
-		snum = fileCount - repeatFileNum - 1;
+	var $li      = $("#"+file.id),
+		filename = file.name,
+		snum     = fileCount - repeatFileNum - 1;
+
+
 	//更新进度条
 	updateProgress(file);
 	//更新上传信息
 	updateInfo();
 	//文本文件上传成功后，请求服务器端txt中的排序
-	if(file.name == "grade.txt"){
+	if(txtname == file.name){
 		//请求txt文件中的排序
 		$.post("server/getQuence.php",function(quenceArr){
 			//排序动作
@@ -317,7 +325,7 @@ uploader.on("uploadSuccess",function(file){
 			$startUpload.addClass('disabled');
 			return;
 		}
-		$.post("server/check.php",{filename:file.name},function(str){
+		$.post("server/check.php",{filename:filename},function(str){
 			if(str == "success"){
 				flag = true;
 
@@ -326,9 +334,9 @@ uploader.on("uploadSuccess",function(file){
 					uploader.upload();
 				}
 
-				$pkg_message.append("<li>打升级包"+file.name+"成功</li>");
+				$pkg_message.append("<li>打升级包" + filename + "成功</li>");
 			}else{
-				$pkg_message.append("<li>打升级包"+file.name+"<span class='red'>失败,后续动作终止！</span><span onclick='location.reload(true);' class='blue'>返回&gt;&gt;</span></li>");
+				$pkg_message.append("<li>打升级包" + filename + "<span class='red'>失败,后续动作终止！</span><span onclick='location.reload(true);' class='blue'>返回&gt;&gt;</span></li>");
 				//中断上传
 				uploader.stop();
 				$startUpload.addClass("disabled");
@@ -349,6 +357,17 @@ uploader.on("error",function(code){
 $startUpload.on("click",function(){
     if ($(this).hasClass('disabled')) {
         return false;
+    }
+    for(var i = 0,ilen = filesAllArr.length; i < ilen; i++){
+    	var filename = filesAllArr[i].name;
+    	if(txtname == filename){
+    		flag = true;
+    	}
+    }
+    //不包含txtname
+    if(!flag){
+    	$info.html("<span class=\"red\">必须包含"+txtname+"文件</div>");
+    	return;
     }
 	uploader.upload();
 
